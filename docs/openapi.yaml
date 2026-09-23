@@ -1,0 +1,342 @@
+openapi: 3.0.3
+info:
+  title: API Reservas - AustralAir
+  description: API publica para gestion de pasajeros y emision/cancelacion de reservas de pasajes.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000/v1
+    description: Servidor local de desarrollo
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /pasajeros:
+    post:
+      summary: Crear pasajero
+      tags: [Pasajeros]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CrearPasajeroRequest"
+      responses:
+        "201":
+          description: Pasajero creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pasajero"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+
+    get:
+      summary: Listar pasajeros
+      tags: [Pasajeros]
+      responses:
+        "200":
+          description: Lista de pasajeros registrados
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Pasajero"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+
+  /pasajeros/{id}:
+    get:
+      summary: Obtener detalle de un pasajero
+      tags: [Pasajeros]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Detalle del pasajero solicitado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pasajero"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          $ref: "#/components/responses/NoEncontrado"
+
+  /vuelos:
+    get:
+      summary: Consultar vuelos y disponibilidad
+      description: Consulta federada que obtiene la disponibilidad en tiempo real desde el servicio de Asientos vía gRPC.
+      tags: [Vuelos]
+      responses:
+        "200":
+          description: Lista de vuelos obtenida
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Vuelo"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "503":
+          $ref: "#/components/responses/ServicioNoDisponible"
+
+  /reservas:
+    post:
+      summary: Crear una reserva de pasaje
+      description: Valida el pasajero, verifica y descuenta cupo en Asientos vía gRPC, y registra la reserva.
+      tags: [Reservas]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Clave idempotente para evitar reservas duplicadas ante reintentos del cliente.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CrearReservaRequest"
+      responses:
+        "201":
+          description: Reserva confirmada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reserva"
+        "400":
+          description: Solicitud invalida (faltan campos requeridos o formato incorrecto)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          description: Pasajero o vuelo no encontrado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Vuelo sin asientos disponibles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: El servicio de Asientos (gRPC) no responde
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      summary: Listar reservas
+      tags: [Reservas]
+      responses:
+        "200":
+          description: Lista de reservas registradas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Reserva"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+
+  /reservas/{id}:
+    get:
+      summary: Consultar una reserva por ID
+      tags: [Reservas]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Detalle de la reserva solicitada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reserva"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          $ref: "#/components/responses/NoEncontrado"
+
+    delete:
+      summary: Cancelar una reserva
+      description: Marca la reserva como cancelada y libera el asiento llamando a Asientos vía gRPC.
+      tags: [Reservas]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Reserva cancelada y asiento liberado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reserva"
+        "401":
+          $ref: "#/components/responses/NoAutorizado"
+        "404":
+          $ref: "#/components/responses/NoEncontrado"
+        "503":
+          $ref: "#/components/responses/ServicioNoDisponible"
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Clave de autenticación para consumir la API pública.
+
+  responses:
+    NoAutorizado:
+      description: Falta API Key o es inválida
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NoEncontrado:
+      description: Recurso no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflicto:
+      description: Conflicto de negocio (ej. sin cupos disponibles)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServicioNoDisponible:
+      description: Falla en la dependencia interna (Asientos gRPC)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ErrorResponse:
+      description: Error de validación o sintaxis
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Pasajero:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        rut:
+          type: string
+          example: "18945632-1"
+        nombre_completo:
+          type: string
+          example: "Camila Soto"
+        email:
+          type: string
+          format: email
+          example: "camila.soto@email.com"
+
+    CrearPasajeroRequest:
+      type: object
+      required: [rut, nombre_completo, email]
+      properties:
+        rut:
+          type: string
+        nombre_completo:
+          type: string
+        email:
+          type: string
+          format: email
+
+    Vuelo:
+      type: object
+      properties:
+        vuelo_id:
+          type: string
+        codigo:
+          type: string
+        origen:
+          type: string
+        destino:
+          type: string
+        capacidad_total:
+          type: integer
+        asientos_disponibles:
+          type: integer
+
+    Reserva:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        pasajero_id:
+          type: string
+          format: uuid
+        vuelo_id:
+          type: string
+        estado:
+          type: string
+          enum: [CONFIRMADA, CANCELADA]
+        creado_en:
+          type: string
+          format: date-time
+
+    CrearReservaRequest:
+      type: object
+      required: [pasajero_id, vuelo_id]
+      properties:
+        pasajero_id:
+          type: string
+          format: uuid
+        vuelo_id:
+          type: string
+
+    Error:
+      type: object
+      required: [codigo, detalle]
+      properties:
+        codigo:
+          type: string
+          enum:
+            - PASAJERO_NO_ENCONTRADO
+            - VUELO_NO_ENCONTRADO
+            - ASIENTOS_INDISPONIBLES
+            - SERVICIO_NO_DISPONIBLE
+            - VALIDACION
+            - NO_AUTORIZADO
+          example: "ASIENTOS_INDISPONIBLES"
+        detalle:
+          type: string
+          example: "No quedan asientos disponibles en el vuelo solicitado."
+        timestamp:
+          type: string
+          format: date-time
