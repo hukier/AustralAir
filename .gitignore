@@ -1,0 +1,37 @@
+# Credenciales y variables de entorno
+.env
+*.env.local
+!.env.example
+
+# Python / Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+ENV/
+
+# Datos persistentes locales de base de datos
+data-asientos/
+data-reservas/
+
+# Editores e IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
