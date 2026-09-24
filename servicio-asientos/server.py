@@ -5,14 +5,12 @@ from concurrent import futures
 import psycopg2
 import grpc
 
-# Añadir la ruta de los archivos generados
 sys.path.append(os.path.join(os.path.dirname(__file__), 'pb'))
 import vuelos_pb2
 import vuelos_pb2_grpc
 
 class AsientosService(vuelos_pb2_grpc.AsientosServiceServicer):
     def __init__(self):
-        # Conexión a la base de datos configurada en docker-compose.yml
         self.db_url = os.environ.get("DATABASE_URL")
 
     def get_db_connection(self):
@@ -29,12 +27,8 @@ class AsientosService(vuelos_pb2_grpc.AsientosServiceServicer):
                     row = cur.fetchone()
                     if row:
                         return vuelos_pb2.VueloResponse(
-                            vuelo_id=row[0],
-                            codigo=row[1],
-                            origen=row[2],
-                            destino=row[3],
-                            capacidad_total=row[4],
-                            asientos_disponibles=row[5]
+                            vuelo_id=row[0], codigo=row[1], origen=row[2],
+                            destino=row[3], capacidad_total=row[4], asientos_disponibles=row[5]
                         )
                     else:
                         context.set_code(grpc.StatusCode.NOT_FOUND)
@@ -45,19 +39,7 @@ class AsientosService(vuelos_pb2_grpc.AsientosServiceServicer):
             context.set_details(str(e))
             return vuelos_pb2.VueloResponse()
 
-    # Aquí debes implementar ListarVuelos, ReservarAsiento y LiberarAsiento
-    # siguiendo la misma estructura de conexión y ejecución de SQL.
-
-def serve():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    vuelos_pb2_grpc.add_AsientosServiceServicer_to_server(AsientosService(), server)
-    port = os.environ.get("PORT", "50051")
-    server.add_insecure_port(f'[::]:{port}')
-    print(f"Servidor de Asientos gRPC iniciando en el puerto {port}...")
-    server.start()
-    server.wait_for_termination()
-
-def ListarVuelos(self, request, context):
+    def ListarVuelos(self, request, context):
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
@@ -80,11 +62,10 @@ def ListarVuelos(self, request, context):
             context.set_details(str(e))
             return vuelos_pb2.ListarVuelosResponse()
 
-def ReservarAsiento(self, request, context):
+    def ReservarAsiento(self, request, context):
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
-                    # Actualización atómica: Solo resta si hay suficientes asientos
                     cur.execute(
                         """
                         UPDATE vuelos 
@@ -99,39 +80,31 @@ def ReservarAsiento(self, request, context):
                     
                     if row:
                         return vuelos_pb2.ModificarCupoResponse(
-                            exito=True,
-                            mensaje="Reserva confirmada",
-                            asientos_restantes=row[0],
-                            codigo_error=vuelos_pb2.CODIGO_ERROR_NO_ESPECIFICADO
+                            exito=True, mensaje="Reserva confirmada",
+                            asientos_restantes=row[0], codigo_error=vuelos_pb2.CODIGO_ERROR_NO_ESPECIFICADO
                         )
                     else:
-                        # Si falló, averiguamos por qué (no existe el vuelo o no hay cupo)
                         cur.execute("SELECT asientos_disponibles FROM vuelos WHERE vuelo_id = %s", (request.vuelo_id,))
                         vuelo = cur.fetchone()
                         if vuelo:
                             return vuelos_pb2.ModificarCupoResponse(
-                                exito=False,
-                                mensaje="Sin asientos suficientes",
-                                asientos_restantes=vuelo[0],
-                                codigo_error=vuelos_pb2.SIN_ASIENTOS_DISPONIBLES
+                                exito=False, mensaje="Sin asientos suficientes",
+                                asientos_restantes=vuelo[0], codigo_error=vuelos_pb2.SIN_ASIENTOS_DISPONIBLES
                             )
                         else:
                             return vuelos_pb2.ModificarCupoResponse(
-                                exito=False,
-                                mensaje="Vuelo no encontrado",
-                                asientos_restantes=0,
-                                codigo_error=vuelos_pb2.VUELO_NO_ENCONTRADO
+                                exito=False, mensaje="Vuelo no encontrado",
+                                asientos_restantes=0, codigo_error=vuelos_pb2.VUELO_NO_ENCONTRADO
                             )
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
             return vuelos_pb2.ModificarCupoResponse(exito=False)
 
-def LiberarAsiento(self, request, context):
+    def LiberarAsiento(self, request, context):
         try:
             with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
-                    # Aseguramos de no superar la capacidad total al liberar
                     cur.execute(
                         """
                         UPDATE vuelos 
@@ -146,24 +119,28 @@ def LiberarAsiento(self, request, context):
                     
                     if row:
                         return vuelos_pb2.ModificarCupoResponse(
-                            exito=True,
-                            mensaje="Asiento liberado",
-                            asientos_restantes=row[0],
-                            codigo_error=vuelos_pb2.CODIGO_ERROR_NO_ESPECIFICADO
+                            exito=True, mensaje="Asiento liberado",
+                            asientos_restantes=row[0], codigo_error=vuelos_pb2.CODIGO_ERROR_NO_ESPECIFICADO
                         )
                     else:
                         return vuelos_pb2.ModificarCupoResponse(
-                            exito=False,
-                            mensaje="Vuelo no encontrado",
-                            asientos_restantes=0,
-                            codigo_error=vuelos_pb2.VUELO_NO_ENCONTRADO
+                            exito=False, mensaje="Vuelo no encontrado",
+                            asientos_restantes=0, codigo_error=vuelos_pb2.VUELO_NO_ENCONTRADO
                         )
         except Exception as e:
             context.set_code(grpc.StatusCode.INTERNAL)
             context.set_details(str(e))
             return vuelos_pb2.ModificarCupoResponse(exito=False)
 
+def serve():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    vuelos_pb2_grpc.add_AsientosServiceServicer_to_server(AsientosService(), server)
+    port = os.environ.get("PORT", "50051")
+    server.add_insecure_port(f'[::]:{port}')
+    print(f"Servidor de Asientos gRPC iniciando en el puerto {port}...")
+    server.start()
+    server.wait_for_termination()
+
 if __name__ == '__main__':
-    # Pequeña pausa para asegurar que la BD esté lista antes de conectar
     time.sleep(2)
     serve()
