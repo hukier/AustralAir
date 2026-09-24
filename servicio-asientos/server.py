@@ -18,6 +18,9 @@ class AsientosService(vuelos_pb2_grpc.AsientosServiceServicer):
 
     def ConsultarVuelo(self, request, context):
         try:
+            #para el experimento ABET6 (simulación de latencia) solo hay que descomentar la demora de abajo y probar el timeout del cliente REST
+            #time.sleep(3)
+
             with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
