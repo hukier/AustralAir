@@ -29,8 +29,9 @@ services:
     build: ./servicio-asientos
     container_name: australair-asientos
     environment:
-      DATABASE_URL: "postgresql://${ASIENTOS_DB_USER:?Falta ASIENTOS_DB_USER}:${ASIENTOS_DB_PASSWORD:?Falta ASIENTOS_DB_PASSWORD}@db-asientos:5432/${ASIENTOS_DB_NAME:?Falta ASIENTOS_DB_NAME}"
+      DATABASE_URL: "postgresql://${ASIENTOS_DB_USER:-user_asientos}:${ASIENTOS_DB_PASSWORD:?Falta ASIENTOS_DB_PASSWORD}@db-asientos:5432/${ASIENTOS_DB_NAME:-asientos_db}"
       PORT: 50051
+      LATENCIA_SIMULADA: ${LATENCIA_SIMULADA:-0.0}
     depends_on:
       db-asientos:
         condition: service_healthy
