@@ -232,3 +232,15 @@ Los documentos formales de arquitectura se encuentran disponibles en la carpeta 
   ```bash
   docker compose down -v
   ```
+
+---
+
+## 9. Declaración de Uso de Herramientas de Inteligencia Artificial
+
+En cumplimiento con las directrices de integridad académica y transparencia, se declara el uso asistido de modelos de lenguaje (LLM) en las siguientes actividades específicas:
+
+* **Depuración de entorno:** Resolución de incompatibilidades en dependencias de contenedores y conectores de PostgreSQL.
+* **Documentación técnica:** Estructuración y redacción formal de los Registros de Decisiones Arquitectónicas (ADRs) bajo plantilla estándar.
+* **Automatización de pruebas:** Apoyo en el script de benchmarking y recolección de percentiles para la evaluación ABET 6.
+
+*Nota:* Todo el diseño arquitectónico, lógica de negocio, batería de pruebas y análisis crítico de métricas fueron implementados, verificados y validados directamente por los autores.
