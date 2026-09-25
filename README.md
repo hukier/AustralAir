@@ -35,7 +35,14 @@ El sistema implementa dos microservicios autónomos desplegados en contenedores 
 
 ### Configuración de Variables de Entorno y Secretos (`.env`)
 
-El despliegue aplica validación estricta de variables en `docker-compose.yml` mediante el patrón `${VAR:?msg}`. Cree un archivo llamado `.env` en la raíz del proyecto (`/AustralAir/.env`):
+Docker Compose utiliza el archivo `.env` de la raíz del proyecto para cargar las variables de configuración y los secretos. Genere este archivo a partir de la plantilla incluida en el repositorio:
+
+* **En Linux / WSL / macOS:**
+  ```bash
+  cp .env.example .env  #clona el ejemplo al archivo .env
+  ```
+
+Antes de iniciar los servicios, revise y ajuste los valores de `.env` según su entorno. El despliegue aplica validación estricta de estas variables en `docker-compose.yml` mediante el patrón `${VAR:?msg}`:
 
 ```dotenv
 API_KEY=secreto-australair-2026
@@ -207,10 +214,10 @@ $env:LATENCIA_SIMULADA="4.0"; docker compose up -d --force-recreate servicio-asi
 
 Los documentos formales de arquitectura se encuentran disponibles en la carpeta `docs/adr/`:
 
-* [ADR-001: Adopción de Arquitectura de Microservicios con Bases de Datos Aisladas](docs/adr/ADR-001-microservicios-bases-datos-aisladas.md)
-* [ADR-002: Seguridad Perimetral Mediante Autenticación Estática con Header X-API-Key](docs/adr/ADR-002-seguridad-perimetral-api-key.md)
-* [ADR-003: Comunicación Síncrona gRPC/Protobuf entre Microservicios](docs/adr/ADR-003-comunicacion-grpc-protobuf.md)
-* [ADR-004: Estrategia de Degradación Elegante y Mapeo de Excepciones gRPC a HTTP 503](docs/adr/ADR-004-degradacion-elegante-timeout-503.md)
+* [ADR-001: Adopción de Arquitectura de Microservicios con Bases de Datos Aisladas](docs/adr/adr_001_arquitectura_de_microservicios_con_persistencia_aislada.md)
+* [ADR-002: Seguridad Perimetral Mediante Autenticación Estática con Header X-API-Key](docs/adr/adr_002_autenticaci_n_perimetral_con_header_x_api_key.md)
+* [ADR-003: Comunicación Síncrona gRPC/Protobuf entre Microservicios](docs/adr/adr_003_comunicaci_n_s_ncrona_grpc_protobuf_vs_rest_interno.md)
+* [ADR-004: Estrategia de Degradación Elegante y Mapeo de Excepciones gRPC a HTTP 503](docs/adr/adr_004_estrategia_de_degradaci_n_elegante_y_fail_fast_grpc_a_http_503.md)
 
 ---
 
