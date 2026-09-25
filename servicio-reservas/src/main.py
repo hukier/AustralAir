@@ -38,7 +38,7 @@ def health_check():
 
 @app.exception_handler(HTTPException)
 async def custom_http_exception_handler(request: Request, exc: HTTPException):
-    if instance(exc.detail, dict) and "codigo" in exc.detail:
+    if isinstance(exc.detail, dict) and "codigo" in exc.detail:
         # Si el detalle ya tiene un codigo de error, lo devolvemos tal cual
         return JSONResponse(status_code=exc.status_code, content=exc.detail)
     return JSONResponse(status_code=exc.status_code, content={

@@ -4,6 +4,10 @@ from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, EmailStr, ConfigDict, Field
 
+class EstadoReservaEnum(str, Enum):
+    CONFIRMADA = "CONFIRMADA"
+    CANCELADA = "CANCELADA"
+
 class CodigoErrorEnum(str, Enum):
     PASAJERO_NO_ENCONTRADO = "PASAJERO_NO_ENCONTRADO"
     PASAJERO_YA_EXISTE = "PASAJERO_YA_EXISTE"
