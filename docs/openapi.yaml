@@ -322,12 +322,14 @@ components:
 
     Error:
       type: object
-      required: [codigo, detalle]
+      required: [codigo, detalle, timestamp]
       properties:
         codigo:
           type: string
           enum:
             - PASAJERO_NO_ENCONTRADO
+            - PASAJERO_YA_EXISTE
+            - RESERVA_NO_ENCONTRADA
             - VUELO_NO_ENCONTRADO
             - ASIENTOS_INDISPONIBLES
             - SERVICIO_NO_DISPONIBLE
@@ -336,7 +338,10 @@ components:
           example: "ASIENTOS_INDISPONIBLES"
         detalle:
           type: string
-          example: "No quedan asientos disponibles en el vuelo solicitado."
+          description: Mensaje descriptivo del error.
+          example: "No se encontró una reserva con el ID proporcionado."
         timestamp:
           type: string
           format: date-time
+          description: Marca temporal UTC en formato ISO 8601 en que ocurrió el error.
+          example: "2026-09-15T14:30:00Z"

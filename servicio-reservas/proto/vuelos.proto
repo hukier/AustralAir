@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package austral.airasientos.v1;
+
+// servicio interno de gestion de los vuelos y disponibilidad de asientos
+service AsientosService {
+  rpc ConsultarVuelo (ConsultarVueloRequest) returns (VueloResponse);
+
+  rpc ListarVuelos (ListarVuelosRequest) returns (ListarVuelosResponse);
+
+  rpc ReservarAsiento (ModificarCupoRequest) returns (ModificarCupoResponse);
+
+  rpc LiberarAsiento (ModificarCupoRequest) returns (ModificarCupoResponse);
+}
+
+message ListarVuelosRequest {}
+
+message ConsultarVueloRequest {
+  string vuelo_id = 1;
+}
+
+message VueloResponse {
+  string vuelo_id             = 1;
+  string codigo               = 2;              // Ej: "AU-102"
+  string origen               = 3;              // Codigo IATA: "CCP"
+  string destino              = 4;             // Codigo IATA: "SCL"
+  int32  capacidad_total      = 5;
+  int32  asientos_disponibles = 6;
+}
+
+message ListarVuelosResponse {
+  repeated VueloResponse vuelos = 1;
+}
+
+message ModificarCupoRequest {
+  string vuelo_id = 1;
+  int32  cantidad = 2;             // Cantidad de asientos a modificar (habitualmente 1)
+}
+
+message ModificarCupoResponse {
+  bool        exito              = 1;
+  string      mensaje            = 2;
+  int32       asientos_restantes = 3;
+  CodigoError codigo_error       = 4;   // solo relevante si exito == false
+}
+
+enum CodigoError {
+  CODIGO_ERROR_NO_ESPECIFICADO = 0;
+  SIN_ASIENTOS_DISPONIBLES     = 1;
+  VUELO_NO_ENCONTRADO          = 2;
+}
