@@ -1,49 +1,63 @@
+// Contrato de Interfaz gRPC / Protocol Buffers: Catálogo y Cupos de Asientos
+// ADR-003
+
 syntax = "proto3";
 
 package austral.airasientos.v1;
 
-// servicio interno de gestion de los vuelos y disponibilidad de asientos
+// Servicio interno de gestión de vuelos y disponibilidad atómica de asientos
 service AsientosService {
+  // Consulta la información y disponibilidad de un vuelo por su ID
   rpc ConsultarVuelo (ConsultarVueloRequest) returns (VueloResponse);
 
+  // Retorna el catálogo completo de vuelos y cupos disponibles
   rpc ListarVuelos (ListarVuelosRequest) returns (ListarVuelosResponse);
 
+  // Decrementa de forma atómica los asientos de un vuelo
   rpc ReservarAsiento (ModificarCupoRequest) returns (ModificarCupoResponse);
 
+  // Incrementa de forma atómica los asientos de un vuelo (rollback/cancelación)
   rpc LiberarAsiento (ModificarCupoRequest) returns (ModificarCupoResponse);
 }
 
+// Solicitud vacía para listar la totalidad de los vuelos
 message ListarVuelosRequest {}
 
+// Solicitud de consulta individual por identificador de vuelo
 message ConsultarVueloRequest {
   string vuelo_id = 1;
 }
 
+// Representación canónica de un vuelo y sus asientos
 message VueloResponse {
-  string vuelo_id             = 1;
-  string codigo               = 2;              // Ej: "AU-102"
-  string origen               = 3;              // Codigo IATA: "CCP"
-  string destino              = 4;             // Codigo IATA: "SCL"
-  int32  capacidad_total      = 5;
-  int32  asientos_disponibles = 6;
+  string vuelo_id           = 1;
+  string codigo             = 2; // Código de vuelo comercial (Ej: "AU-102")
+  string origen             = 3; // Código IATA de origen (Ej: "CCP")
+  string destino            = 4; // Código IATA de destino (Ej: "SCL")
+  int32  capacidad_total    = 5; // Capacidad física de la aeronave
+  int32  asientos_disponibles = 6; // Cupos libres en tiempo real
 }
 
+// Colección de vuelos disponibles retornados por el catálogo
 message ListarVuelosResponse {
   repeated VueloResponse vuelos = 1;
 }
 
+// Solicitud unificada para modificar cupos (reservas o liberaciones)
 message ModificarCupoRequest {
   string vuelo_id = 1;
-  int32  cantidad = 2;             // Cantidad de asientos a modificar (habitualmente 1)
+  int32  cantidad = 2; // Cantidad de asientos a modificar (habitualmente 1)
 }
 
+// Respuesta a la mutación de cupos con detalle de error estructurado
 message ModificarCupoResponse {
   bool        exito              = 1;
   string      mensaje            = 2;
   int32       asientos_restantes = 3;
-  CodigoError codigo_error       = 4;   // solo relevante si exito == false
+  CodigoError codigo_error       = 4; // Relevante únicamente si exito == false
 }
 
+// Clasificación de errores a nivel de dominio para el contrato gRPC
 enum CodigoError {
   CODIGO_ERROR_NO_ESPECIFICADO = 0;
   SIN_ASIENTOS_DISPONIBLES     = 1;
