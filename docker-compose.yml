@@ -6,9 +6,9 @@ services:
     image: postgres:15-alpine
     container_name: australair-db-asientos
     environment:
-      POSTGRES_USER: ${ASIENTOS_DB_USER:-user_asientos}
+      POSTGRES_USER: ${ASIENTOS_DB_USER:?Falta ASIENTOS_DB_USER - copia .env.example a .env}
       POSTGRES_PASSWORD: ${ASIENTOS_DB_PASSWORD:?Falta ASIENTOS_DB_PASSWORD - copia .env.example a .env}
-      POSTGRES_DB: ${ASIENTOS_DB_NAME:-asientos_db}
+      POSTGRES_DB: ${ASIENTOS_DB_NAME:?Falta ASIENTOS_DB_NAME - copia .env.example a .env}
     volumes:
       - ./servicio-asientos/init_db.sql:/docker-entrypoint-initdb.d/init.sql
       - data-asientos:/var/lib/postgresql/data
@@ -16,7 +16,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${ASIENTOS_DB_USER:-user_asientos} -d ${ASIENTOS_DB_NAME:-asientos_db}",
+          "pg_isready -U ${ASIENTOS_DB_USER:?Falta ASIENTOS_DB_USER} -d ${ASIENTOS_DB_NAME:?Falta ASIENTOS_DB_NAME}",
         ]
       interval: 5s
       timeout: 5s
@@ -29,7 +29,7 @@ services:
     build: ./servicio-asientos
     container_name: australair-asientos
     environment:
-      DATABASE_URL: "postgresql://${ASIENTOS_DB_USER:-user_asientos}:${ASIENTOS_DB_PASSWORD:?Falta ASIENTOS_DB_PASSWORD}@db-asientos:5432/${ASIENTOS_DB_NAME:-asientos_db}"
+      DATABASE_URL: "postgresql://${ASIENTOS_DB_USER:?Falta ASIENTOS_DB_USER}:${ASIENTOS_DB_PASSWORD:?Falta ASIENTOS_DB_PASSWORD}@db-asientos:5432/${ASIENTOS_DB_NAME:?Falta ASIENTOS_DB_NAME}"
       PORT: 50051
     depends_on:
       db-asientos:
@@ -43,9 +43,9 @@ services:
     image: postgres:15-alpine
     container_name: australair-db-reservas
     environment:
-      POSTGRES_USER: ${RESERVAS_DB_USER:-user_reservas}
+      POSTGRES_USER: ${RESERVAS_DB_USER:?Falta RESERVAS_DB_USER - copia .env.example a .env}
       POSTGRES_PASSWORD: ${RESERVAS_DB_PASSWORD:?Falta RESERVAS_DB_PASSWORD - copia .env.example a .env}
-      POSTGRES_DB: ${RESERVAS_DB_NAME:-reservas_db}
+      POSTGRES_DB: ${RESERVAS_DB_NAME:?Falta RESERVAS_DB_NAME - copia .env.example a .env}
     volumes:
       - ./servicio-reservas/init_db.sql:/docker-entrypoint-initdb.d/init.sql
       - data-reservas:/var/lib/postgresql/data
@@ -53,7 +53,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${RESERVAS_DB_USER:-user_reservas} -d ${RESERVAS_DB_NAME:-reservas_db}",
+          "pg_isready -U ${RESERVAS_DB_USER:?Falta RESERVAS_DB_USER} -d ${RESERVAS_DB_NAME:?Falta RESERVAS_DB_NAME}",
         ]
       interval: 5s
       timeout: 5s
@@ -68,7 +68,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: "postgresql://${RESERVAS_DB_USER:-user_reservas}:${RESERVAS_DB_PASSWORD:?Falta RESERVAS_DB_PASSWORD}@db-reservas:5432/${RESERVAS_DB_NAME:-reservas_db}"
+      DATABASE_URL: "postgresql://${RESERVAS_DB_USER:?Falta RESERVAS_DB_USER}:${RESERVAS_DB_PASSWORD:?Falta RESERVAS_DB_PASSWORD}@db-reservas:5432/${RESERVAS_DB_NAME:?Falta RESERVAS_DB_NAME}"
       ASIENTOS_GRPC_HOST: "servicio-asientos:50051"
       API_KEY: ${API_KEY:?Falta API_KEY - copia .env.example a .env}
     depends_on:
