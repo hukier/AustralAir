@@ -8,36 +8,39 @@ Plataforma de reservas de vuelos e inventario atómico de asientos construida so
 
 El sistema implementa dos microservicios autónomos desplegados en contenedores Docker y segmentados en redes virtuales aisladas:
 
-* **`servicio-reservas` (API Gateway / Perímetro):**
+- **`servicio-reservas` (API Gateway / Perímetro):**
   * Expone API REST pública en el puerto `8000` bajo el prefijo versionado `/v1`.
-  * Autenticación perimetral obligatoria mediante cabecera HTTP `X-API-Key: secreto-australair-2026`.
-  * Base de datos relacional independiente: `db-reservas` (PostgreSQL en puerto interno `5432`). Gestiona tablas `pasajeros` y `reservas`.
+  * Autenticación perimetral obligatoria mediante cabecera HTTP `X-API-Key: secreto-australair-2026` (ADR-002).
+  * Base de datos relacional independiente: `db-reservas` (PostgreSQL en puerto interno `5432`). Gestiona tablas `pasajeros`, `reservas` e `idempotency_keys`.
   * Actúa como cliente gRPC consumiendo las capacidades del catálogo de asientos.
-  * Implementa patrón **Fail-Fast** con timeout de 3.0 segundos y degradación controlada retornando `HTTP 503 Service Unavailable` estructurado.
+  * Implementa patrón **Fail-Fast** con timeout estricto de 3.0 segundos y degradación controlada retornando `HTTP 503 Service Unavailable` estructurado (ADR-004).
   * Documentación interactiva Swagger/OpenAPI disponible en `http://localhost:8000/docs`.
 
-* **`servicio-asientos` (Backend de Inventario):**
-  * Expone servicios RPC vía **gRPC / Protocol Buffers** en el puerto `50051`.
-  * Base de datos relacional independiente: `db-asientos` (PostgreSQL en puerto interno `5432`). Gestiona tablas `vuelos` y `asientos`.
-  * Garantiza transaccionalidad atómica y previene sobreventas con lógica SQL condicional (`WHERE asientos_disponibles >= $cantidad`).
-  * Lógica de liberación acotada al límite físico de la aeronave mediante función SQL `LEAST()`.
+- **`servicio-asientos` (Backend de Inventario):**
+  * Expone servicios RPC vía **gRPC / Protocol Buffers** en el puerto `50051` utilizando un canal unario sobre HTTP/2 (ADR-003).
+  * Contrato de interfaz binaria único centralizado en la raíz del repositorio (`/proto/vuelos.proto`) bajo el paquete `austral.airasientos.v1` (ADR-005).
+  * Base de datos relacional independiente: `db-asientos` (PostgreSQL en puerto interno `5432`). Gestiona la tabla `vuelos`.
+  * Garantiza transaccionalidad atómica y previene sobreventas concurrentes mediante actualización SQL condicional (`WHERE vuelo_id = %s AND asientos_disponibles >= %s`)[cite: 3, 4].
+  * Guarda explícita en devoluciones que rechaza exceder la capacidad física de la aeronave (`(asientos_disponibles + %s) <= capacidad_total`), evitando enmascarar errores de doble liberación.
+  * Detección activa de timeout o cancelación gRPC (`context.is_active()`) antes del commit para evitar asientos descontados sin reserva en el cliente[cite: 5].
 
 ---
 
 ## 2. Prerrequisitos y Configuración
 
-* **Docker** y **Docker Compose v2** o superior en ejecución.
-* **Python 3.10+** instalado en el host para ejecutar los scripts de prueba y benchmarking.
-* Paquetes Python locales necesarios para la medición:
-  ```bash
-  pip install requests numpy
-  ```
+- **Docker Engine v24.0+** y **Docker Compose v2+** en ejecución.
+- **Python 3.10+** en el equipo anfitrión para ejecutar las rutinas de benchmarking.
+- Dependencias estándar de Python para medición (`urllib` nativo; `numpy` opcional para cálculo de percentiles).
 
 ### Configuración de Variables de Entorno y Secretos (`.env`)
 
-Docker Compose utiliza el archivo `.env` de la raíz del proyecto para cargar las variables de configuración y los secretos. Genere este archivo a partir de la plantilla incluida en el repositorio:
+Docker Compose utiliza el archivo `.env` en la raíz del proyecto para inyectar credenciales y puertos. Genere este archivo a partir de la plantilla incluida:
 
-* **En Linux / WSL / macOS:**
+- **En Windows (PowerShell):**
+  ```powershell
+  Copy-Item .env.example .env
+
+- **En Linux / WSL / macOS:**
   ```bash
   cp .env.example .env  #clona el ejemplo al archivo .env
   ```
@@ -47,13 +50,13 @@ Antes de iniciar los servicios, revise y ajuste los valores de `.env` según su 
 ```dotenv
 API_KEY=secreto-australair-2026
 
-POSTGRES_USER_RESERVAS=usuario_reservas
-POSTGRES_PASSWORD_RESERVAS=password_reservas_segura
-POSTGRES_DB_RESERVAS=australair_reservas
+ASIENTOS_DB_USER=usuario_asientos
+ASIENTOS_DB_PASSWORD=password_asientos_segura
+ASIENTOS_DB_NAME=australair_asientos
 
-POSTGRES_USER_ASIENTOS=usuario_asientos
-POSTGRES_PASSWORD_ASIENTOS=password_asientos_segura
-POSTGRES_DB_ASIENTOS=australair_asientos
+RESERVAS_DB_USER=usuario_reservas
+RESERVAS_DB_PASSWORD=password_reservas_segura
+RESERVAS_DB_NAME=australair_reservas
 ```
 
 ---
@@ -76,9 +79,9 @@ POSTGRES_DB_ASIENTOS=australair_asientos
    docker compose ps
    ```
 
-   Deben figurar en estado activo (`Up`) y con salud óptima (`healthy`):
-   * `australair-reservas`
-   * `australair-asientos`
+   Los cuatro contenedores deben reportar estado activo y saludable (healthy):
+   * `australair-reservas` (`healthy`)
+   * `australair-asientos` (`healthy`)
    * `australair-db-reservas` (`healthy`)
    * `australair-db-asientos` (`healthy`)
 
@@ -96,11 +99,13 @@ X-API-Key: secreto-australair-2026
 
 | Método | Endpoint | Descripción | Parámetros / Payload Requerido |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/health` | Verificación de estado del gateway (público) | N/A |
-| `POST` | `/v1/pasajeros` | Registra un nuevo pasajero | `{"rut": "18945632-1", "nombre_completo": "...", "email": "..."}` |
-| `GET` | `/v1/vuelos` | Consulta catálogo de vuelos vía gRPC | N/A |
-| `POST` | `/v1/reservas` | Crea y confirma una reserva | `{"pasajero_id": "UUID", "vuelo_id": "1"}` |
-| `GET` | `/v1/reservas/{id}` | Consulta el estado de una reserva | Parámetro `id` (UUID) en URL |
+| `GET` | `/health` | Chequeo de salud del gateway (público) | Ninguno |
+| `GET` | `/v1/vuelos` | Consulta catálogo de vuelos vía gRPC | `X-API-Key` |
+| `POST` | `/v1/pasajeros` | Registra un nuevo pasajero | `X-API-Key, {"rut": "18945632-1", "nombre_completo": "...", "email": "..."}` |
+| `POST` | `/v1/reservas` | Crea reserva con soporte de idempotencia | `X-API-Key`, Idempotency-Key (opcional), `{"pasajero_id": "UUID", "vuelo_id": "1"}` |
+| `GET` | `/v1/reservas/{id}` | Consulta el estado de una reserva | `X-API-Key`, parámetro `id (UUID)` en URL |
+| `DELETE` | `/v1/reservas/{id}` | Cancelación atómica y restitución de cupo | `X-API-Key`, parámetro `id (UUID)` en URL |
+
 
 ### Pruebas directas con `curl`:
 
@@ -151,62 +156,80 @@ Comprueba que ante la pérdida total de conectividad con el microservicio intern
 
 ### B. Batería de Pruebas Unitarias / Integración de Asientos
 
-Para comprobar los 8 casos transaccionales (rutas exitosas, prevención de sobreventa, vuelos inexistentes y tope de capacidad vía `LEAST`), ejecute:
+Para ejecutar los 8 casos de prueba con aserciones formales sobre el microservicio de asientos:
 
 ```bash
 docker compose exec servicio-asientos python test_client.py
 ```
-
+Nota de Aislamiento: La batería opera sobre un vuelo temporal de prueba (`TEST-99`, capacidad 10) que se inicializa y destruye automáticamente en un bloque `finally`:, preservando intacto el inventario de los vuelos reales (`AU-102` y `AU-205`).
 ---
 
 ## 6. Experimento de Ingeniería ABET 6: Evaluación Bajo Degradación
 
-El experimento evalúa el comportamiento del sistema ante latencia sintética inyectada en la llamada gRPC `ListarVuelos`, midiendo Throughput (req/s), percentiles de latencia ($p50, p95, p99$) y tasa de fallos HTTP (200 OK vs 503 Service Unavailable) bajo 100 peticiones concurrentes ($C=10$).
+El experimento evalúa el comportamiento del API Gateway ante retardos sintéticos inyectados en la llamada gRPC `ListarVuelos` mediante la variable de entorno `LATENCIA_SIMULADA`.El script `medir_abet6.py` implementa:
+* 3 repeticiones consecutivas de 100 peticiones con concurrencia 10 ($C=10$) y fase previa de calentamiento (warm-up).
+* Persistencia automática de cada muestra individual en resultados_abet6_crudos.csv para verificación empírica y análisis de variabilidad.
+* Soporte para consultas (GET /v1/vuelos) y creación de reservas (POST /v1/reservas).
 
 ### Protocolo de Ejecución de los 4 Escenarios:
 
 #### En entornos Linux / WSL / macOS:
-
 ```bash
-# Escenario 1: Base (0.0s de retardo)
-LATENCIA_SIMULADA=0.0 docker compose up -d servicio-asientos && python3 medir_abet6.py "Escenario 1: Base"
+# Escenario 1: Base (0.0 s de retardo)
+$env:LATENCIA_SIMULADA="0.0"; docker compose up -d servicio-asientos
+python medir_abet6.py "Escenario 1: Base" GET
 
-# Escenario 2: Degradación Moderada (0.5s de retardo)
-LATENCIA_SIMULADA=0.5 docker compose up -d servicio-asientos && python3 medir_abet6.py "Escenario 2: 500ms"
+# Escenario 2: Degradación Moderada (0.5 s de retardo)
+$env:LATENCIA_SIMULADA="0.5"; docker compose up -d servicio-asientos
+python medir_abet6.py "Escenario 2: Moderado" GET
 
-# Escenario 3: Límite Operacional (2.5s de retardo)
-LATENCIA_SIMULADA=2.5 docker compose up -d servicio-asientos && python3 medir_abet6.py "Escenario 3: 2500ms"
+# Escenario 3: Límite Operacional (2.5 s de retardo)
+$env:LATENCIA_SIMULADA="2.5"; docker compose up -d servicio-asientos
+python medir_abet6.py "Escenario 3: Limite" GET
 
-# Escenario 4: Superación de Timeout / Fail-Fast (4.0s de retardo)
-LATENCIA_SIMULADA=4.0 docker compose up -d servicio-asientos && python3 medir_abet6.py "Escenario 4: Fail-Fast 4000ms"
+# Escenario 4: Fail-Fast y Timeout (4.0 s de retardo)
+$env:LATENCIA_SIMULADA="4.0"; docker compose up -d servicio-asientos
+python medir_abet6.py "Escenario 4: Fail-Fast" GET
+python medir_abet6.py "Escenario 4: Fail-Fast" POST
 ```
 
-#### En PowerShell (Windows):
+#### En entornos Linux / WSL / macOS:
+```bash
+# Escenario 1: Base (0.0 s de retardo)
+LATENCIA_SIMULADA=0.0 docker compose up -d servicio-asientos
+python3 medir_abet6.py "Escenario 1: Base" GET
 
-```powershell
-# Escenario 1: Base (0.0s de retardo)
-$env:LATENCIA_SIMULADA="0.0"; docker compose up -d --force-recreate servicio-asientos; python medir_abet6.py
+# Escenario 2: Degradación Moderada (0.5 s de retardo)
+LATENCIA_SIMULADA=0.5 docker compose up -d servicio-asientos
+python3 medir_abet6.py "Escenario 2: Moderado" GET
 
-# Escenario 2: Degradación Moderada (0.5s de retardo)
-$env:LATENCIA_SIMULADA="0.5"; docker compose up -d --force-recreate servicio-asientos; python medir_abet6.py
+# Escenario 3: Límite Operacional (2.5 s de retardo)
+LATENCIA_SIMULADA=2.5 docker compose up -d servicio-asientos
+python3 medir_abet6.py "Escenario 3: Limite" GET
 
-# Escenario 3: Límite Operacional (2.5s de retardo)
-$env:LATENCIA_SIMULADA="2.5"; docker compose up -d --force-recreate servicio-asientos; python medir_abet6.py
-
-# Escenario 4: Superación de Timeout / Fail-Fast (4.0s de retardo)
-$env:LATENCIA_SIMULADA="4.0"; docker compose up -d --force-recreate servicio-asientos; python medir_abet6.py
+# Escenario 4: Fail-Fast y Timeout (4.0 s de retardo)
+LATENCIA_SIMULADA=4.0 docker compose up -d servicio-asientos
+python3 medir_abet6.py "Escenario 4: Fail-Fast" GET
+python3 medir_abet6.py "Escenario 4: Fail-Fast" POST
+```
+Al finalizar las mediciones, restablecer el backend a su régimen nominal:
+```bash
+# En Windows (PowerShell):
+$env:LATENCIA_SIMULADA="0.0"; docker compose up -d servicio-asientos
+# En Linux / macOS (Bash):
+LATENCIA_SIMULADA=0.0 docker compose up -d servicio-asientos
 ```
 
 ### Resultados Empíricos Registrados:
 
 | Escenario | Retardo Inyectado | Throughput | Latencia $p50$ | Latencia $p95$ | Latencia $p99$ | Distribución HTTP |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **1. Base** | 0.0 s | 85.25 req/s | 81.45 ms | 277.31 ms | 392.34 ms | 100% 200 OK |
-| **2. Moderado** | 0.5 s | 16.47 req/s | 535.10 ms | 1196.02 ms | 1211.36 ms | 100% 200 OK |
-| **3. Límite** | 2.5 s | 3.89 req/s | 2527.77 ms | 2931.71 ms | 2944.59 ms | 100% 200 OK |
-| **4. Fail-Fast** | 4.0 s | 3.28 req/s | 3018.21 ms | 3208.98 ms | 3306.91 ms | 100% 503 Unavailable |
+| **1. Base** | 0.0 s | ~57.3 req/s | ~133.2 ms | ~260.0 ms | ~289.4 ms | 100% 200 OK |
+| **2. Moderado** | 0.5 s | ~16.5 req/s | ~535.1 ms | ~1196.0 ms | ~1211.4 ms | 100% 200 OK |
+| **3. Límite** | 2.5 s | ~3.9 req/s | ~2527.8 ms | ~2931.7 ms | ~2944.6 ms | 100% 200 OK |
+| **4. Fail-Fast** | 4.0 s | ~3.3 req/s | ~3023.2 ms | ~3050.5 ms | ~3057.4 ms | 100% 503 Unavailable |
 
-> **Conclusión técnica:** Al superar el límite de tolerancia de 3.0 s en el Escenario 4, el cliente gRPC corta la ejecución exactamente a los $\approx 3.01\,\text{s}$ ($p50$) retornando HTTP 503, liberando los hilos del API Gateway e impidiendo el bloqueo acumulativo de la plataforma.
+> **Conclusión técnica:** Al superar el umbral de 3.0 s en el Escenario 4, el cliente gRPC interrumpe la conexión de forma determinista a los $\approx 3.02\,\text{s}$ ($p50$), propagando inmediatamente HTTP 503 y liberando los hilos del API Gateway para preservar la atención de rutas perimetrales no degradadas.
 
 ---
 
@@ -214,10 +237,12 @@ $env:LATENCIA_SIMULADA="4.0"; docker compose up -d --force-recreate servicio-asi
 
 Los documentos formales de arquitectura se encuentran disponibles en la carpeta `docs/adr/`:
 
-* [ADR-001: Adopción de Arquitectura de Microservicios con Bases de Datos Aisladas](docs/adr/adr_001_arquitectura_de_microservicios_con_persistencia_aislada.md)
-* [ADR-002: Seguridad Perimetral Mediante Autenticación Estática con Header X-API-Key](docs/adr/adr_002_autenticaci_n_perimetral_con_header_x_api_key.md)
-* [ADR-003: Comunicación Síncrona gRPC/Protobuf entre Microservicios](docs/adr/adr_003_comunicaci_n_s_ncrona_grpc_protobuf_vs_rest_interno.md)
-* [ADR-004: Estrategia de Degradación Elegante y Mapeo de Excepciones gRPC a HTTP 503](docs/adr/adr_004_estrategia_de_degradaci_n_elegante_y_fail_fast_grpc_a_http_503.md)
+### Registros de Decisiones Arquitectónicas (ADRs)
+* [ADR-001: Microservicios con Bases de Datos Aisladas](docs/adr/ADR-001-microservicios-bases-datos-aisladas.md)
+* [ADR-002: Seguridad Perimetral Mediante Encabezado X-API-Key](docs/adr/ADR-002-seguridad-perimetral-x-api-key.md)
+* [ADR-003: Comunicación Síncrona gRPC/Protobuf entre Microservicios](docs/adr/adr_003_comunicaci_n_s_ncrona_grpc_protobuf_vs_rest_interno.md) *(Actualizado con justificación de RPC Unario)*
+* [ADR-004: Estrategia de Degradación Elegante y Fail-Fast](docs/adr/ADR-004-degradacion-elegante-fail-fast.md)
+* [ADR-005: Estrategia de Contratos, Versionado y Evolución](docs/adr/adr-005-contrato-versionado-evolucion.md) *(Nuevo: reglas de compatibilidad Protobuf y ciclo de vida de APIs)*
 
 ---
 
@@ -239,8 +264,8 @@ Los documentos formales de arquitectura se encuentran disponibles en la carpeta 
 
 En cumplimiento con las directrices de integridad académica y transparencia, se declara el uso asistido de modelos de lenguaje (LLM) en las siguientes actividades específicas:
 
-* **Depuración de entorno:** Resolución de incompatibilidades en dependencias de contenedores y conectores de PostgreSQL.
-* **Documentación técnica:** Estructuración y redacción formal de los Registros de Decisiones Arquitectónicas (ADRs) bajo plantilla estándar.
-* **Automatización de pruebas:** Apoyo en el script de benchmarking y recolección de percentiles para la evaluación ABET 6.
+* **Depuración de entorno:** Resolución de incompatibilidades en conectores de PostgreSQL y unificación de contextos de compilación en Docker Compose.
+* **Documentación técnica:** Estructuración y redacción formal de los Registros de Decisiones Arquitectónicas (ADRs) bajo estándar Nygard.
+* **Automatización de pruebas:** Apoyo en la estructura del script de benchmarking `medir_abet6.py` para la exportación de datos crudos y cálculo de percentiles.
 
 *Nota:* Todo el diseño arquitectónico, lógica de negocio, batería de pruebas y análisis crítico de métricas fueron implementados, verificados y validados directamente por los autores.
