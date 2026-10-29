@@ -1,91 +1,114 @@
-version: "3.8"
 
 services:
-  # Base de datos exclusiva de Asientos
+  # -------------------------------------------------------------
+  # Base de Datos: Asientos
+  # -------------------------------------------------------------
   db-asientos:
     image: postgres:15-alpine
     container_name: australair-db-asientos
     environment:
       POSTGRES_USER: ${ASIENTOS_DB_USER:?Falta ASIENTOS_DB_USER - copia .env.example a .env}
-      POSTGRES_PASSWORD: ${ASIENTOS_DB_PASSWORD:?Falta ASIENTOS_DB_PASSWORD - copia .env.example a .env}
-      POSTGRES_DB: ${ASIENTOS_DB_NAME:?Falta ASIENTOS_DB_NAME - copia .env.example a .env}
+      POSTGRES_PASSWORD: ${ASIENTOS_DB_PASSWORD:?Falta ASIENTOS_DB_PASSWORD}
+      POSTGRES_DB: ${ASIENTOS_DB_NAME:?Falta ASIENTOS_DB_NAME}
     volumes:
       - ./servicio-asientos/init_db.sql:/docker-entrypoint-initdb.d/init.sql
-      - data-asientos:/var/lib/postgresql/data
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${ASIENTOS_DB_USER:?Falta ASIENTOS_DB_USER} -d ${ASIENTOS_DB_NAME:?Falta ASIENTOS_DB_NAME}",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - datos-db-asientos:/var/lib/postgresql/data
     networks:
       - red-asientos
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ASIENTOS_DB_USER} -d ${ASIENTOS_DB_NAME}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
-  # Microservicio gRPC Asientos
+  # -------------------------------------------------------------
+  # Backend gRPC: Asientos
+  # -------------------------------------------------------------
   servicio-asientos:
-    build: ./servicio-asientos
+    build:
+      context: .
+      dockerfile: ./servicio-asientos/Dockerfile
     container_name: australair-asientos
     environment:
-      DATABASE_URL: "postgresql://${ASIENTOS_DB_USER:-user_asientos}:${ASIENTOS_DB_PASSWORD:?Falta ASIENTOS_DB_PASSWORD}@db-asientos:5432/${ASIENTOS_DB_NAME:-asientos_db}"
+      DATABASE_URL: postgresql://${ASIENTOS_DB_USER}:${ASIENTOS_DB_PASSWORD}@db-asientos:5432/${ASIENTOS_DB_NAME}
       PORT: 50051
       LATENCIA_SIMULADA: ${LATENCIA_SIMULADA:-0.0}
+    ports:
+      - "50051:50051"
     depends_on:
       db-asientos:
         condition: service_healthy
     networks:
       - red-asientos
-      - red-interna-grpc
+      - red-backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1', 50051), timeout=2); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    restart: unless-stopped
 
-  # Base de datos exclusiva de Reservas
+  # -------------------------------------------------------------
+  # Base de Datos: Reservas
+  # -------------------------------------------------------------
   db-reservas:
     image: postgres:15-alpine
     container_name: australair-db-reservas
     environment:
       POSTGRES_USER: ${RESERVAS_DB_USER:?Falta RESERVAS_DB_USER - copia .env.example a .env}
-      POSTGRES_PASSWORD: ${RESERVAS_DB_PASSWORD:?Falta RESERVAS_DB_PASSWORD - copia .env.example a .env}
-      POSTGRES_DB: ${RESERVAS_DB_NAME:?Falta RESERVAS_DB_NAME - copia .env.example a .env}
+      POSTGRES_PASSWORD: ${RESERVAS_DB_PASSWORD:?Falta RESERVAS_DB_PASSWORD}
+      POSTGRES_DB: ${RESERVAS_DB_NAME:?Falta RESERVAS_DB_NAME}
     volumes:
-      - ./servicio-reservas/init_db.sql:/docker-entrypoint-initdb.d/init.sql
-      - data-reservas:/var/lib/postgresql/data
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${RESERVAS_DB_USER:?Falta RESERVAS_DB_USER} -d ${RESERVAS_DB_NAME:?Falta RESERVAS_DB_NAME}",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      - datos-db-reservas:/var/lib/postgresql/data
     networks:
       - red-reservas
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RESERVAS_DB_USER} -d ${RESERVAS_DB_NAME}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
-  # Microservicio REST Reservas (Puerta de entrada externa)
+  # -------------------------------------------------------------
+  # API Gateway: Reservas
+  # -------------------------------------------------------------
   servicio-reservas:
-    build: ./servicio-reservas
+    build:
+      context: .
+      dockerfile: ./servicio-reservas/Dockerfile
     container_name: australair-reservas
+    environment:
+      DATABASE_URL: postgresql://${RESERVAS_DB_USER}:${RESERVAS_DB_PASSWORD}@db-reservas:5432/${RESERVAS_DB_NAME}
+      ASIENTOS_GRPC_HOST: servicio-asientos:50051
+      API_KEY: ${API_KEY:-secreto-australair-2026}
     ports:
       - "8000:8000"
-    environment:
-      DATABASE_URL: "postgresql://${RESERVAS_DB_USER:?Falta RESERVAS_DB_USER}:${RESERVAS_DB_PASSWORD:?Falta RESERVAS_DB_PASSWORD}@db-reservas:5432/${RESERVAS_DB_NAME:?Falta RESERVAS_DB_NAME}"
-      ASIENTOS_GRPC_HOST: "servicio-asientos:50051"
-      API_KEY: ${API_KEY:?Falta API_KEY - copia .env.example a .env}
     depends_on:
       db-reservas:
         condition: service_healthy
       servicio-asientos:
-        condition: service_started
+        condition: service_healthy
     networks:
       - red-reservas
-      - red-interna-grpc
-
-volumes:
-  data-asientos:
-  data-reservas:
+      - red-backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 4s
+    restart: unless-stopped
 
 networks:
   red-asientos:
+    driver: bridge
   red-reservas:
-  red-interna-grpc:
+    driver: bridge
+  red-backend:
+    driver: bridge
+
+volumes:
+  datos-db-asientos:
+  datos-db-reservas:
