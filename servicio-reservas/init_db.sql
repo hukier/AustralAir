@@ -26,11 +26,12 @@ CREATE TABLE IF NOT EXISTS reservas (
 
 CREATE INDEX IF NOT EXISTS idx_reservas_vuelo_id ON reservas(vuelo_id);
 
--- Tabla para almacenar llaves de idempotencia
+-- Tabla para almacenar llaves de idempotencia y hash del payload
 CREATE TABLE IF NOT EXISTS idempotency_keys (
     key UUID PRIMARY KEY,
-    response_code INT NOT NULL,
-    response_body JSONB NOT NULL,
+    request_hash VARCHAR(64) NOT NULL,
+    response_code INT,
+    response_body JSONB,
     creado_en TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 

@@ -1,6 +1,7 @@
 import uuid
 import enum
 from datetime import datetime
+from typing import Optional
 from sqlalchemy import String, Integer, DateTime, ForeignKey, Enum as SQLEnum, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -42,6 +43,7 @@ class IdempotencyRecord(Base):
     __tablename__ = "idempotency_keys"
 
     key: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    response_code: Mapped[int] = mapped_column(Integer, nullable=False)
-    response_body: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    response_body: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

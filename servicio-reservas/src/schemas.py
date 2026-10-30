@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, EmailStr, ConfigDict, Field
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator
 
 class EstadoReservaEnum(str, Enum):
     CONFIRMADA = "CONFIRMADA"
@@ -17,6 +17,8 @@ class CodigoErrorEnum(str, Enum):
     SERVICIO_NO_DISPONIBLE = "SERVICIO_NO_DISPONIBLE"
     VALIDACION = "VALIDACION"
     NO_AUTORIZADO = "NO_AUTORIZADO"
+    PROHIBIDO = "PROHIBIDO"
+    CONFLICTO_IDEMPOTENCIA = "CONFLICTO_IDEMPOTENCIA"
     ERROR_INTERNO = "ERROR_INTERNO"
 
 class ErrorResponse(BaseModel):
@@ -26,9 +28,22 @@ class ErrorResponse(BaseModel):
 
 # --- Esquemas de Pasajeros ---
 class CrearPasajeroRequest(BaseModel):
-    rut: str = Field(..., examples=["18945632-1"])
-    nombre_completo: str = Field(..., examples=["Camila Soto"])
-    email: EmailStr = Field(..., examples=["camila.soto@email.com"])
+    rut: str = Field(..., pattern=r"^\d{7,8}-[\dkK]$", examples=["18945632-1"])
+    nombre_completo: str = Field(..., min_length=2, max_length=150, examples=["Camila Soto"])
+    email: EmailStr = Field(..., max_length=150, examples=["camila.soto@email.com"])
+
+    @field_validator("rut")
+    @classmethod
+    def normalizar_rut(cls, v: str) -> str:
+        return v[:-1] + v[-1].upper()
+
+    @field_validator("nombre_completo")
+    @classmethod
+    def validar_nombre_no_vacio(cls, v: str) -> str:
+        limpio = v.strip()
+        if len(limpio) < 2:
+            raise ValueError("El nombre completo debe contener al menos 2 caracteres válidos.")
+        return limpio
 
 class PasajeroResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -50,7 +65,7 @@ class VueloResponse(BaseModel):
 # --- Esquemas de Reservas ---
 class CrearReservaRequest(BaseModel):
     pasajero_id: uuid.UUID
-    vuelo_id: str
+    vuelo_id: str = Field(..., min_length=1, max_length=50)
 
 class ReservaResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)

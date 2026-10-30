@@ -5,7 +5,7 @@ Aspectos técnicos destacados:
 - Persistencia aislada en PostgreSQL (db-asientos) bajo ADR-001
 - Contrato gRPC / Protocol Buffers (AsientosService) bajo ADR-003
 - Prevención de condiciones de carrera y sobreventa mediante SQL condicional
-- Uso de función LEAST() para garantizar el tope físico de capacidad
+- Guarda explícita de capacidad máxima al restituir cupos sin ocultar dobles liberaciones
 - Inyección de latencia parametrizada para evaluación de resiliencia (ABET 6)
 """
 import sys
@@ -28,8 +28,17 @@ class AsientosService(vuelos_pb2_grpc.AsientosServiceServicer):
     def get_db_connection(self):
         return psycopg2.connect(self.db_url)
 
+    def _aplicar_latencia_simulada(self):
+        latencia = float(os.environ.get("LATENCIA_SIMULADA", "0.0"))
+        if latencia > 0:
+            time.sleep(latencia)
+
     def ConsultarVuelo(self, request, context):
         try:
+            self._aplicar_latencia_simulada()
+            if not context.is_active():
+                return vuelos_pb2.VueloResponse()
+
             with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
@@ -62,9 +71,9 @@ class AsientosService(vuelos_pb2_grpc.AsientosServiceServicer):
     def ListarVuelos(self, request, context):
         try:
             # Inyección de latencia para experimentación ABET 6
-            latencia = float(os.environ.get("LATENCIA_SIMULADA", "0.0"))
-            if latencia > 0:
-                time.sleep(latencia)
+            self._aplicar_latencia_simulada()
+            if not context.is_active():
+                return vuelos_pb2.ListarVuelosResponse()
 
             with self.get_db_connection() as conn:
                 with conn.cursor() as cur:
@@ -100,6 +109,16 @@ class AsientosService(vuelos_pb2_grpc.AsientosServiceServicer):
             return vuelos_pb2.ModificarCupoResponse(
                 exito=False,
                 mensaje="Cantidad invalida",
+                asientos_restantes=0,
+                codigo_error=vuelos_pb2.CODIGO_ERROR_NO_ESPECIFICADO
+            )
+
+        # 1.5 Inyección de latencia para experimentación ABET 6 (incluyendo POST /v1/reservas)
+        self._aplicar_latencia_simulada()
+        if not context.is_active():
+            return vuelos_pb2.ModificarCupoResponse(
+                exito=False,
+                mensaje="Llamada gRPC expirada o cancelada antes de descontar cupo",
                 asientos_restantes=0,
                 codigo_error=vuelos_pb2.CODIGO_ERROR_NO_ESPECIFICADO
             )
@@ -180,6 +199,16 @@ class AsientosService(vuelos_pb2_grpc.AsientosServiceServicer):
             return vuelos_pb2.ModificarCupoResponse(
                 exito=False,
                 mensaje="Cantidad invalida",
+                asientos_restantes=0,
+                codigo_error=vuelos_pb2.CODIGO_ERROR_NO_ESPECIFICADO
+            )
+
+        # 1.5 Inyección de latencia para experimentación ABET 6 y verificación previa de deadline
+        self._aplicar_latencia_simulada()
+        if not context.is_active():
+            return vuelos_pb2.ModificarCupoResponse(
+                exito=False,
+                mensaje="Llamada gRPC expirada o cancelada antes de liberar cupo",
                 asientos_restantes=0,
                 codigo_error=vuelos_pb2.CODIGO_ERROR_NO_ESPECIFICADO
             )

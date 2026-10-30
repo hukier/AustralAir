@@ -1,7 +1,10 @@
 openapi: 3.0.3
 info:
   title: API Reservas - AustralAir
-  description: API publica para gestion de pasajeros y emision/cancelacion de reservas de pasajes.
+  description: >-
+    API pública para gestión de pasajeros y emisión/cancelación de reservas de pasajes.
+    Soporta autenticación con control de acceso basado en roles mediante cabecera X-API-Key
+    (rol de Operación con permisos completos y rol de Lectura restringido a consultas GET).
   version: 1.0.0
 servers:
   - url: http://localhost:8000/v1
@@ -14,6 +17,7 @@ paths:
   /pasajeros:
     post:
       summary: Crear pasajero
+      description: Registra un nuevo pasajero validando unicidad y formato de RUT y correo electrónico. Requiere rol de Operación.
       tags: [Pasajeros]
       requestBody:
         required: true
@@ -29,9 +33,15 @@ paths:
               schema:
                 $ref: "#/components/schemas/Pasajero"
         "400":
-          $ref: "#/components/responses/ErrorResponse"
+          $ref: "#/components/responses/SolicitudInvalida"
         "401":
           $ref: "#/components/responses/NoAutorizado"
+        "403":
+          $ref: "#/components/responses/Prohibido"
+        "409":
+          $ref: "#/components/responses/Conflicto"
+        "422":
+          $ref: "#/components/responses/ErrorValidacion"
 
     get:
       summary: Listar pasajeros
@@ -70,6 +80,8 @@ paths:
           $ref: "#/components/responses/NoAutorizado"
         "404":
           $ref: "#/components/responses/NoEncontrado"
+        "422":
+          $ref: "#/components/responses/ErrorValidacion"
 
   /vuelos:
     get:
@@ -93,13 +105,18 @@ paths:
   /reservas:
     post:
       summary: Crear una reserva de pasaje
-      description: Valida el pasajero, verifica y descuenta cupo en Asientos vía gRPC, y registra la reserva.
+      description: >-
+        Valida el pasajero, reserva opcionalmente la clave de idempotencia asociada al hash SHA-256
+        del cuerpo, descuenta atómicamente el cupo en Asientos vía gRPC y persiste la reserva con
+        compensación automática ante fallos locales. Requiere rol de Operación.
       tags: [Reservas]
       parameters:
         - name: Idempotency-Key
           in: header
           required: false
-          description: Clave idempotente para evitar reservas duplicadas ante reintentos del cliente.
+          description: >-
+            Clave idempotente opcional (UUID) para evitar reservas duplicadas ante reintentos.
+            Si se reutiliza con un payload diferente, se rechaza con 409 Conflict.
           schema:
             type: string
             format: uuid
@@ -117,31 +134,23 @@ paths:
               schema:
                 $ref: "#/components/schemas/Reserva"
         "400":
-          description: Solicitud invalida (faltan campos requeridos o formato incorrecto)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+          $ref: "#/components/responses/SolicitudInvalida"
         "401":
           $ref: "#/components/responses/NoAutorizado"
+        "403":
+          $ref: "#/components/responses/Prohibido"
         "404":
-          description: Pasajero o vuelo no encontrado
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+          $ref: "#/components/responses/NoEncontrado"
         "409":
-          description: Vuelo sin asientos disponibles
+          description: Vuelo sin asientos disponibles o reutilización inválida de Idempotency-Key
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/ErrorValidacion"
         "503":
-          description: El servicio de Asientos (gRPC) no responde
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+          $ref: "#/components/responses/ServicioNoDisponible"
 
     get:
       summary: Listar reservas
@@ -180,10 +189,15 @@ paths:
           $ref: "#/components/responses/NoAutorizado"
         "404":
           $ref: "#/components/responses/NoEncontrado"
+        "422":
+          $ref: "#/components/responses/ErrorValidacion"
 
     delete:
       summary: Cancelar una reserva
-      description: Marca la reserva como cancelada y libera el asiento llamando a Asientos vía gRPC.
+      description: >-
+        Transiciona atómicamente la reserva de CONFIRMADA a CANCELADA y restituye un asiento en
+        Asientos vía gRPC únicamente en la primera transición efectiva (operación idempotente).
+        Requiere rol de Operación.
       tags: [Reservas]
       parameters:
         - name: id
@@ -194,15 +208,19 @@ paths:
             format: uuid
       responses:
         "200":
-          description: Reserva cancelada y asiento liberado
+          description: Reserva cancelada (y asiento liberado si estaba CONFIRMADA)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Reserva"
         "401":
           $ref: "#/components/responses/NoAutorizado"
+        "403":
+          $ref: "#/components/responses/Prohibido"
         "404":
           $ref: "#/components/responses/NoEncontrado"
+        "422":
+          $ref: "#/components/responses/ErrorValidacion"
         "503":
           $ref: "#/components/responses/ServicioNoDisponible"
 
@@ -212,11 +230,32 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
-      description: Clave de autenticación para consumir la API pública.
+      description: >-
+        Clave de autenticación y autorización por rol:
+        - Rol Operación (`API_KEY`, ej. `secreto-australair-2026`): acceso total (`GET`, `POST`, `DELETE`).
+        - Rol Lectura (`API_KEY_LECTURA`, ej. `lectura-australair-2026`): acceso exclusivo a `GET`; retorna `403 Forbidden` en escrituras.
 
   responses:
+    SolicitudInvalida:
+      description: Solicitud con sintaxis JSON malformada
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ErrorValidacion:
+      description: Error de validación en parámetros, cabeceras o campos del cuerpo
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
     NoAutorizado:
       description: Falta API Key o es inválida
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Prohibido:
+      description: API Key válida pero sin permisos suficientes para esta operación (rol de solo lectura)
       content:
         application/json:
           schema:
@@ -228,19 +267,19 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Conflicto:
-      description: Conflicto de negocio (ej. sin cupos disponibles)
+      description: Conflicto de negocio (ej. pasajero duplicado, sin cupos disponibles o colisión de Idempotency-Key)
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
     ServicioNoDisponible:
-      description: Falla en la dependencia interna (Asientos gRPC)
-      content:
-        application/json:
+      description: Falla o tiempo de espera agotado en la dependencia interna (Asientos gRPC)
+      headers:
+        Retry-After:
+          description: Tiempo sugerido en segundos antes de reintentar la petición.
           schema:
-            $ref: "#/components/schemas/Error"
-    ErrorResponse:
-      description: Error de validación o sintaxis
+            type: integer
+            example: 5
       content:
         application/json:
           schema:
@@ -249,19 +288,24 @@ components:
   schemas:
     Pasajero:
       type: object
+      required: [id, rut, nombre_completo, email]
       properties:
         id:
           type: string
           format: uuid
         rut:
           type: string
+          pattern: '^\d{7,8}-[\dkK]$'
           example: "18945632-1"
         nombre_completo:
           type: string
+          minLength: 2
+          maxLength: 150
           example: "Camila Soto"
         email:
           type: string
           format: email
+          maxLength: 150
           example: "camila.soto@email.com"
 
     CrearPasajeroRequest:
@@ -270,14 +314,22 @@ components:
       properties:
         rut:
           type: string
+          pattern: '^\d{7,8}-[\dkK]$'
+          example: "18945632-1"
         nombre_completo:
           type: string
+          minLength: 2
+          maxLength: 150
+          example: "Camila Soto"
         email:
           type: string
           format: email
+          maxLength: 150
+          example: "camila.soto@email.com"
 
     Vuelo:
       type: object
+      required: [vuelo_id, codigo, origen, destino, capacidad_total, asientos_disponibles]
       properties:
         vuelo_id:
           type: string
@@ -294,6 +346,7 @@ components:
 
     Reserva:
       type: object
+      required: [id, pasajero_id, vuelo_id, estado, creado_en]
       properties:
         id:
           type: string
@@ -303,6 +356,8 @@ components:
           format: uuid
         vuelo_id:
           type: string
+          minLength: 1
+          maxLength: 50
         estado:
           type: string
           enum: [CONFIRMADA, CANCELADA]
@@ -319,6 +374,8 @@ components:
           format: uuid
         vuelo_id:
           type: string
+          minLength: 1
+          maxLength: 50
 
     Error:
       type: object
@@ -335,13 +392,16 @@ components:
             - SERVICIO_NO_DISPONIBLE
             - VALIDACION
             - NO_AUTORIZADO
+            - PROHIBIDO
+            - CONFLICTO_IDEMPOTENCIA
+            - ERROR_INTERNO
           example: "ASIENTOS_INDISPONIBLES"
         detalle:
           type: string
           description: Mensaje descriptivo del error.
-          example: "No se encontró una reserva con el ID proporcionado."
+          example: "No hay asientos disponibles para el vuelo solicitado."
         timestamp:
           type: string
           format: date-time
           description: Marca temporal UTC en formato ISO 8601 en que ocurrió el error.
-          example: "2026-09-15T14:30:00Z"
+          example: "2026-10-30T14:30:00Z"

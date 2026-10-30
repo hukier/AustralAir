@@ -61,6 +61,7 @@ services:
       POSTGRES_PASSWORD: ${RESERVAS_DB_PASSWORD:?Falta RESERVAS_DB_PASSWORD}
       POSTGRES_DB: ${RESERVAS_DB_NAME:?Falta RESERVAS_DB_NAME}
     volumes:
+      - ./servicio-reservas/init_db.sql:/docker-entrypoint-initdb.d/init.sql
       - datos-db-reservas:/var/lib/postgresql/data
     networks:
       - red-reservas
@@ -83,6 +84,7 @@ services:
       DATABASE_URL: postgresql://${RESERVAS_DB_USER}:${RESERVAS_DB_PASSWORD}@db-reservas:5432/${RESERVAS_DB_NAME}
       ASIENTOS_GRPC_HOST: servicio-asientos:50051
       API_KEY: ${API_KEY:-secreto-australair-2026}
+      API_KEY_LECTURA: ${API_KEY_LECTURA:-lectura-australair-2026}
     ports:
       - "8000:8000"
     depends_on:

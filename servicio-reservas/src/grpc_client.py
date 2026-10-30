@@ -30,7 +30,8 @@ class AsientosGRPCClient:
                     "codigo": CodigoErrorEnum.SERVICIO_NO_DISPONIBLE.value,
                     "detalle": "El servicio interno de Asientos no se encuentra disponible o agotó el tiempo de espera.",
                     "timestamp": datetime.now(timezone.utc).isoformat()
-                }
+                },
+                headers={"Retry-After": "5"}
             )
         
         # Cualquier otra falla interna no controlada

@@ -10,19 +10,19 @@ El sistema implementa dos microservicios autónomos desplegados en contenedores 
 
 - **`servicio-reservas` (API Gateway / Perímetro):**
   * Expone API REST pública en el puerto `8000` bajo el prefijo versionado `/v1`.
-  * Autenticación perimetral obligatoria mediante cabecera HTTP `X-API-Key: secreto-australair-2026` (ADR-002).
-  * Base de datos relacional independiente: `db-reservas` (PostgreSQL en puerto interno `5432`). Gestiona tablas `pasajeros`, `reservas` e `idempotency_keys`.
+  * Autenticación y autorización por roles mediante cabecera HTTP `X-API-Key` (`API_KEY` con rol **Operación** y `API_KEY_LECTURA` con rol **Lectura**, respondiendo `401` o `403` según corresponda — ADR-002).
+  * Base de datos relacional independiente: `db-reservas` (PostgreSQL en puerto interno `5432`). Gestiona tablas `pasajeros`, `reservas` e `idempotency_keys` (con hash SHA-256 del cuerpo y compensación ante fallos locales).
   * Actúa como cliente gRPC consumiendo las capacidades del catálogo de asientos.
-  * Implementa patrón **Fail-Fast** con timeout estricto de 3.0 segundos y degradación controlada retornando `HTTP 503 Service Unavailable` estructurado (ADR-004).
+  * Implementa patrón **Fail-Fast** con timeout estricto de 3.0 segundos y degradación controlada retornando `HTTP 503 Service Unavailable` estructurado con cabecera `Retry-After: 5` (ADR-004).
   * Documentación interactiva Swagger/OpenAPI disponible en `http://localhost:8000/docs`.
 
 - **`servicio-asientos` (Backend de Inventario):**
   * Expone servicios RPC vía **gRPC / Protocol Buffers** en el puerto `50051` utilizando un canal unario sobre HTTP/2 (ADR-003).
   * Contrato de interfaz binaria único centralizado en la raíz del repositorio (`/proto/vuelos.proto`) bajo el paquete `austral.airasientos.v1` (ADR-005).
   * Base de datos relacional independiente: `db-asientos` (PostgreSQL en puerto interno `5432`). Gestiona la tabla `vuelos`.
-  * Garantiza transaccionalidad atómica y previene sobreventas concurrentes mediante actualización SQL condicional (`WHERE vuelo_id = %s AND asientos_disponibles >= %s`)[cite: 3, 4].
+  * Garantiza transaccionalidad atómica y previene sobreventas concurrentes mediante actualización SQL condicional (`WHERE vuelo_id = %s AND asientos_disponibles >= %s`).
   * Guarda explícita en devoluciones que rechaza exceder la capacidad física de la aeronave (`(asientos_disponibles + %s) <= capacidad_total`), evitando enmascarar errores de doble liberación.
-  * Detección activa de timeout o cancelación gRPC (`context.is_active()`) antes del commit para evitar asientos descontados sin reserva en el cliente[cite: 5].
+  * Detección activa de timeout o cancelación gRPC (`context.is_active()`) antes del commit para evitar asientos descontados sin reserva en el cliente.
 
 ---
 
@@ -39,24 +39,26 @@ Docker Compose utiliza el archivo `.env` en la raíz del proyecto para inyectar 
 - **En Windows (PowerShell):**
   ```powershell
   Copy-Item .env.example .env
+  ```
 
 - **En Linux / WSL / macOS:**
   ```bash
-  cp .env.example .env  #clona el ejemplo al archivo .env
+  cp .env.example .env  # clona el ejemplo al archivo .env
   ```
 
 Antes de iniciar los servicios, revise y ajuste los valores de `.env` según su entorno. El despliegue aplica validación estricta de estas variables en `docker-compose.yml` mediante el patrón `${VAR:?msg}`:
 
 ```dotenv
+ASIENTOS_DB_USER=user_asientos
+ASIENTOS_DB_PASSWORD=asientos_secret_pass_2026
+ASIENTOS_DB_NAME=asientos_db
+
+RESERVAS_DB_USER=user_reservas
+RESERVAS_DB_PASSWORD=reservas_secret_pass_2026
+RESERVAS_DB_NAME=reservas_db
+
 API_KEY=secreto-australair-2026
-
-ASIENTOS_DB_USER=usuario_asientos
-ASIENTOS_DB_PASSWORD=password_asientos_segura
-ASIENTOS_DB_NAME=australair_asientos
-
-RESERVAS_DB_USER=usuario_reservas
-RESERVAS_DB_PASSWORD=password_reservas_segura
-RESERVAS_DB_NAME=australair_reservas
+API_KEY_LECTURA=lectura-australair-2026
 ```
 
 ---
@@ -89,7 +91,7 @@ RESERVAS_DB_NAME=australair_reservas
 
 ## 4. Endpoints de la API REST (`servicio-reservas`)
 
-La documentación OpenAPI interactiva se encuentra habilitada en `http://localhost:8000/docs`. Todas las rutas bajo `/v1` requieren el encabezado de autenticación perimetral:
+La documentación OpenAPI interactiva se encuentra habilitada en `http://localhost:8000/docs`. Todas las rutas bajo `/v1` requieren el encabezado de autenticación perimetral (`secreto-australair-2026` para rol **Operación** con lectura/escritura, o `lectura-australair-2026` para rol **Lectura** exclusivo en `GET`, devolviendo `403 Forbidden` en `POST`/`DELETE`):
 
 ```http
 X-API-Key: secreto-australair-2026
@@ -161,19 +163,19 @@ Para ejecutar los 8 casos de prueba con aserciones formales sobre el microservic
 ```bash
 docker compose exec servicio-asientos python test_client.py
 ```
-Nota de Aislamiento: La batería opera sobre un vuelo temporal de prueba (`TEST-99`, capacidad 10) que se inicializa y destruye automáticamente en un bloque `finally`:, preservando intacto el inventario de los vuelos reales (`AU-102` y `AU-205`).
+Nota de Aislamiento: La batería opera sobre un vuelo temporal de prueba (`TEST-99`, capacidad 10) que se inicializa y destruye automáticamente en un bloque `finally`, preservando intacto el inventario de los vuelos reales (`AU-102` y `AU-205`).
 ---
 
 ## 6. Experimento de Ingeniería ABET 6: Evaluación Bajo Degradación
 
-El experimento evalúa el comportamiento del API Gateway ante retardos sintéticos inyectados en la llamada gRPC `ListarVuelos` mediante la variable de entorno `LATENCIA_SIMULADA`.El script `medir_abet6.py` implementa:
+El experimento evalúa el comportamiento del API Gateway ante retardos sintéticos inyectados en las llamadas gRPC de `servicio-asientos` mediante la variable de entorno `LATENCIA_SIMULADA`. El script `medir_abet6.py` implementa:
 * 3 repeticiones consecutivas de 100 peticiones con concurrencia 10 ($C=10$) y fase previa de calentamiento (warm-up).
-* Persistencia automática de cada muestra individual en resultados_abet6_crudos.csv para verificación empírica y análisis de variabilidad.
-* Soporte para consultas (GET /v1/vuelos) y creación de reservas (POST /v1/reservas).
+* Persistencia automática de cada muestra individual en `resultados_abet6_crudos.csv` para verificación empírica y análisis de variabilidad.
+* Soporte para consultas (`GET /v1/vuelos`) y creación de reservas (`POST /v1/reservas`).
 
 ### Protocolo de Ejecución de los 4 Escenarios:
 
-#### En entornos Linux / WSL / macOS:
+#### En entornos Windows (PowerShell):
 ```bash
 # Escenario 1: Base (0.0 s de retardo)
 $env:LATENCIA_SIMULADA="0.0"; docker compose up -d servicio-asientos
@@ -238,11 +240,11 @@ LATENCIA_SIMULADA=0.0 docker compose up -d servicio-asientos
 Los documentos formales de arquitectura se encuentran disponibles en la carpeta `docs/adr/`:
 
 ### Registros de Decisiones Arquitectónicas (ADRs)
-* [ADR-001: Microservicios con Bases de Datos Aisladas](docs/adr/ADR-001-microservicios-bases-datos-aisladas.md)
-* [ADR-002: Seguridad Perimetral Mediante Encabezado X-API-Key](docs/adr/ADR-002-seguridad-perimetral-x-api-key.md)
-* [ADR-003: Comunicación Síncrona gRPC/Protobuf entre Microservicios](docs/adr/adr_003_comunicaci_n_s_ncrona_grpc_protobuf_vs_rest_interno.md) *(Actualizado con justificación de RPC Unario)*
-* [ADR-004: Estrategia de Degradación Elegante y Fail-Fast](docs/adr/ADR-004-degradacion-elegante-fail-fast.md)
-* [ADR-005: Estrategia de Contratos, Versionado y Evolución](docs/adr/adr-005-contrato-versionado-evolucion.md) *(Nuevo: reglas de compatibilidad Protobuf y ciclo de vida de APIs)*
+* [ADR-001: Microservicios con Bases de Datos Aisladas](docs/adr/adr_001_arquitectura_de_microservicios_con_persistencia_aislada.md)
+* [ADR-002: Seguridad Perimetral y Control de Acceso por Roles con Header X-API-Key](docs/adr/adr_002_autenticaci_n_perimetral_con_header_x_api_key.md)
+* [ADR-003: Comunicación Síncrona gRPC/Protobuf entre Microservicios](docs/adr/adr_003_comunicaci_n_s_ncrona_grpc_protobuf_vs_rest_interno.md) *(Con justificación de RPC Unario)*
+* [ADR-004: Estrategia de Degradación Elegante y Fail-Fast](docs/adr/adr_004_estrategia_de_degradaci_n_elegante_y_fail_fast_grpc_a_http_503.md)
+* [ADR-005: Estrategia de Contratos, Versionado y Evolución](docs/adr/adr-005-contrato-versionado-evolucion.md) *(Reglas de compatibilidad Protobuf y ciclo de vida de APIs)*
 
 ---
 
