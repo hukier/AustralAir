@@ -1,4 +1,3 @@
-
 services:
   # -------------------------------------------------------------
   # Base de Datos: Asientos
@@ -103,14 +102,124 @@ services:
       start_period: 4s
     restart: unless-stopped
 
+  # -------------------------------------------------------------
+  # Base de Datos: Emisión
+  # -------------------------------------------------------------
+  db-emision:
+    image: postgres:15-alpine
+    container_name: australair-db-emision
+    environment:
+      POSTGRES_USER: ${EMISION_DB_USER:-usuario_emision}
+      POSTGRES_PASSWORD: ${EMISION_DB_PASSWORD:-password_emision_segura}
+      POSTGRES_DB: ${EMISION_DB_NAME:-australair_emision}
+    volumes:
+      - datos-db-emision:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${EMISION_DB_USER:-usuario_emision} -d ${EMISION_DB_NAME:-australair_emision}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - red-emision
+    restart: unless-stopped
+
+  # -------------------------------------------------------------
+  # Microservicio: Emisión
+  # -------------------------------------------------------------
+  servicio-emision:
+    build:
+      context: .
+      dockerfile: servicio-emision/Dockerfile
+    container_name: australair-emision
+    ports:
+      - "8002:8002"
+    environment:
+      DATABASE_URL: postgresql://${EMISION_DB_USER:-usuario_emision}:${EMISION_DB_PASSWORD:-password_emision_segura}@db-emision:5432/${EMISION_DB_NAME:-australair_emision}
+      FALLA_SIMULADA_EMISION: "false"
+    depends_on:
+      db-emision:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    networks:
+      - red-emision
+      - red-saga
+    restart: unless-stopped
+
+  # -------------------------------------------------------------
+  # Base de Datos: Saga
+  # -------------------------------------------------------------
+  db-saga:
+    image: postgres:15-alpine
+    container_name: australair-db-saga
+    environment:
+      POSTGRES_USER: ${SAGA_DB_USER:-usuario_saga}
+      POSTGRES_PASSWORD: ${SAGA_DB_PASSWORD:-password_saga_segura}
+      POSTGRES_DB: ${SAGA_DB_NAME:-australair_saga}
+    volumes:
+      - datos-db-saga:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SAGA_DB_USER:-usuario_saga} -d ${SAGA_DB_NAME:-australair_saga}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - red-saga
+    restart: unless-stopped
+
+  # -------------------------------------------------------------
+  # Microservicio: Orquestador Saga
+  # -------------------------------------------------------------
+  servicio-saga:
+    build:
+      context: .
+      dockerfile: servicio-saga/Dockerfile
+    container_name: australair-saga
+    ports:
+      - "8003:8003"
+    environment:
+      DATABASE_URL: postgresql://${SAGA_DB_USER:-usuario_saga}:${SAGA_DB_PASSWORD:-password_saga_segura}@db-saga:5432/${SAGA_DB_NAME:-australair_saga}
+      GRPC_ASIENTOS_HOST: servicio-asientos:50051
+      EMISION_URL: http://servicio-emision:8002
+      PAGOS_URL: mock
+    depends_on:
+      db-saga:
+        condition: service_healthy
+      servicio-asientos:
+        condition: service_healthy
+      servicio-emision:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 4s
+    networks:
+      - red-backend
+      - red-asientos
+      - red-emision
+      - red-saga
+    restart: unless-stopped
+
 networks:
-  red-asientos:
+  red-backend:
     driver: bridge
   red-reservas:
     driver: bridge
-  red-backend:
+  red-asientos:
+    driver: bridge
+  red-emision:
+    driver: bridge
+  red-saga:
     driver: bridge
 
 volumes:
   datos-db-asientos:
   datos-db-reservas:
+  datos-db-emision:
+  datos-db-saga:
