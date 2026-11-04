@@ -1,0 +1,3 @@
+escenario,saga_id,http_code,duracion_ms,estado_final,pnr,detalle
+1. Camino Feliz,SAGA-24fd048eb2,201,448.49,COMPLETADA,AU-ZXROB,Flujo completo exitoso (Asientos -> Pagos -> Emision)
+2. Fallo y Compensacion,AUTO-COMPENSADA,500,176.85,COMPENSADA,ANULADO/NO_EMITIDO,"Fallo al emitir boleto: Emisión falló: {""detail"":""Error simulado en Servicio de Emisión: falla de comunicación con IATA/"
